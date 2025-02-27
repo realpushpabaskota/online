@@ -6,6 +6,7 @@ import useWallet from "../hooks/useWallet";
 const LoginPage = () => {
   const [phone, setPhone] = useState(""); // For phone number
   const [password, setPassword] = useState(""); // For password
+  const [voterIDFile, setVoterIDFile] = useState(null); // For file upload
   const [message, setMessage] = useState(""); // For error or success message
   const navigate = useNavigate();
   const { signer } = useWallet();
@@ -35,7 +36,7 @@ const LoginPage = () => {
         // Store tokens securely in localStorage
         localStorage.setItem("accessToken", access);
         localStorage.setItem("refreshToken", refresh);
-        localStorage.setItem('admin', admin)
+        localStorage.setItem("admin", admin);
         setMessage("Login successful!");
 
         // Redirect the user to the dashboard page
@@ -47,12 +48,48 @@ const LoginPage = () => {
     } catch (error) {
       // Handle errors
       if (error.response) {
-        // If the backend returns an error message
         setMessage(error.response.data.detail || "Login failed.");
       } else {
-        // If a network error or other issue occurs
         setMessage("An error occurred. Please try again.");
       }
+    }
+  };
+
+  // Handle voter ID file upload
+  const handleFileChange = (e) => {
+    setVoterIDFile(e.target.files[0]);
+  };
+
+  // Handle voter ID OCR extraction and upload
+  const handleVoterIDUpload = async (e) => {
+    e.preventDefault();
+
+    if (!voterIDFile) {
+      setMessage("Please upload a valid Voter ID file.");
+      return;
+    }
+
+    try {
+      const accessToken = localStorage.getItem("accessToken"); // Get stored token
+
+      // Create form data to send the file
+      const formData = new FormData();
+      formData.append("voter_id", voterIDFile);
+
+      const response = await axios.post(
+        "http://127.0.0.1:8000/user/upload-voter-id/",
+        formData,
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "multipart/form-data",
+          },
+        }
+      );
+
+      setMessage("Voter ID uploaded and processed successfully!");
+    } catch (error) {
+      setMessage("Failed to upload Voter ID. Please try again.");
     }
   };
 
@@ -80,12 +117,25 @@ const LoginPage = () => {
             required
           />
         </div>
-        {message && <p style={{ color: "red" }}>{message}</p>}
         <button type="submit">Login</button>
-        <button type="button" onClick={() => navigate("/")}>
-          Back to Home
-        </button>
       </form>
+
+      {/* Upload Voter ID Section */}
+      <h2>Upload Your Voter ID</h2>
+      <form onSubmit={handleVoterIDUpload}>
+        <div>
+          <label>Upload Voter ID</label>
+          <input type="file" accept="image/*,.pdf" onChange={handleFileChange} required />
+        </div>
+        <button type="submit">Upload & Extract</button>
+      </form>
+
+      {message && <p style={{ color: "red" }}>{message}</p>}
+
+      <button type="button" onClick={() => navigate("/")}>
+        Back to Home
+      </button>
+
       <p>
         Don't have an account? <a href="/new-registration">Register here</a>
       </p>
