@@ -23,7 +23,9 @@ function Dashboard() {
     const [userAccount, setUserAccount] = useState(null);
     const [loading, setLoading] = useState(false);
 
-    const token = localStorage.getItem("accessToken");
+    const API_BASE_URL = "http://127.0.0.1:8000";
+    let token = localStorage.getItem("accessToken");
+
     const isAdmin = localStorage.getItem("admin") === "true";
 
     useEffect(() => {
@@ -31,56 +33,65 @@ function Dashboard() {
         checkVoterStatus();
     }, []);
 
-    // Fetch candidates from the backend
+    // ✅ Fetch Candidates
     const fetchCandidates = async () => {
         setLoading(true);
         setError("");
         try {
-            const response = await axios.get("http://127.0.0.1:8000/candidate/candidates/", {
+            const response = await axios.get(`${API_BASE_URL}/candidate/candidates/`, {
                 headers: { Authorization: `Bearer ${token}` },
             });
-            if (response.data && Array.isArray(response.data)) {
-                setCandidates(response.data);
-                console.log(response.data);
-
-            } else {
-                setError("Invalid candidates data format from the server.");
-            }
+            setCandidates(Array.isArray(response.data) ? response.data : []);
         } catch (err) {
-            console.error("Error fetching candidates:", err);
-            setError(err.response?.data?.message || "Failed to fetch candidates.");
+            setError("⚠️ Failed to fetch candidates.");
         } finally {
             setLoading(false);
         }
     };
 
-    // Check voter registration status
+    // ✅ Check if voter is registered
     const checkVoterStatus = async () => {
         try {
-            const response = await axios.get("http://127.0.0.1:8000/voters/voters/user/", {
+            const response = await axios.get(`${API_BASE_URL}/voters/voters/user/`, {
                 headers: { Authorization: `Bearer ${token}` },
             });
-
-            if (Array.isArray(response.data)) {
-                setVoterExists(response.data.length > 0);
-            } else {
-                setError("Invalid response format from server.");
-            }
+            setVoterExists(Array.isArray(response.data) && response.data.length > 0);
         } catch (err) {
-            setError(err.response?.data?.message || "Error checking voter status.");
+            setError("⚠️ Error checking voter status.");
         }
     };
 
-    // Handle voting
+    // ✅ Refresh Token if Expired
+    const refreshAccessToken = async () => {
+        const refreshToken = localStorage.getItem("refreshToken");
+        if (!refreshToken) return null;
+
+        try {
+            const response = await axios.post(`${API_BASE_URL}/auth/token/refresh/`, {
+                refresh: refreshToken,
+            });
+            localStorage.setItem("accessToken", response.data.access);
+            return response.data.access;
+        } catch (err) {
+            alert("Session expired. Please log in again.");
+            return null;
+        }
+    };
+
+    // ✅ Handle Voting
     const handleVote = async (candidateId) => {
         if (!userAccount) {
-            alert("Please connect MetaMask first.");
+            alert("⚠️ Please connect MetaMask first.");
             return;
         }
 
+        token = localStorage.getItem("accessToken");
         if (!token) {
-            setError("Authorization token is missing.");
-            return;
+            token = await refreshAccessToken();
+            if (!token) {
+                alert("⚠️ Your session has expired. Please log in again.");
+                return;
+            }
         }
 
         setError("");
@@ -88,66 +99,55 @@ function Dashboard() {
         setLoading(true);
 
         try {
-            let data = new FormData();
-            data.append("candidate", candidateId);
-
             const response = await axios.post(
-                `http://127.0.0.1:8000/votes/votes/`,
-                data, // Pass the data as the second argument
+                `${API_BASE_URL}/votes/api/votes/`,
+                { candidate: candidateId }, // ✅ Correct request format
                 {
-                    headers: { Authorization: `Bearer ${token}` },
+                    headers: {
+                        Authorization: `Bearer ${token}`,
+                        "Content-Type": "application/json",
+                    },
                 }
             );
 
-            if (response.data && response.data.success) {
-                setSuccess("Your vote has been successfully cast!");
-                fetchCandidates(); // Refresh candidates to update vote count
-                return;
+            if (response.status === 201) {
+                setSuccess("✅ Vote successfully cast!");
+                fetchCandidates();
+            } else {
+                setError("⚠️ Unexpected response from the server.");
             }
-
         } catch (err) {
-            console.error("Error casting vote:", err);
-            setError(err.response?.data?.message || "Error casting vote.");
+            setError(err.response?.data?.message || `❌ Error: ${err.response?.status}`);
         } finally {
             setLoading(false);
         }
     };
 
-
-    // Handle form input changes for voter registration
-    const handleInputChange = (e) => {
-        setFormData({ ...formData, [e.target.name]: e.target.value.trim() });
-    };
-
-    // Add new voter
+    // ✅ Handle Voter Registration
     const handleAddVoter = async (e) => {
         e.preventDefault();
 
         const requiredFields = ["full_name", "last_name", "permanent_address", "age", "dob"];
         for (const field of requiredFields) {
-            if (!formData[field] || formData[field].trim() === "") {
-                setError(`Please fill in the required field: ${field.replace("_", " ")}`);
+            if (!formData[field]?.trim()) {
+                setError(`⚠️ Please fill in: ${field.replace("_", " ")}`);
                 return;
             }
         }
 
-        if (isNaN(formData.age) || formData.age <= 0) {
-            setError("Age must be a valid number greater than 0.");
-            return;
-        }
-
-        if (new Date(formData.dob) > new Date()) {
-            setError("Date of birth must be in the past.");
+        if (parseInt(formData.age, 10) < 18) {
+            setError("❌ You must be at least 18 years old to register.");
             return;
         }
 
         setLoading(true);
         try {
-            await axios.post("http://127.0.0.1:8000/voters/voters/create/", formData, {
+            await axios.post(`${API_BASE_URL}/voters/voters/create/`, formData, {
                 headers: { Authorization: `Bearer ${token}` },
             });
 
             setVoterExists(true);
+            setSuccess("✅ Voter registered successfully!");
             setFormData({
                 full_name: "",
                 middle_name: "",
@@ -158,9 +158,8 @@ function Dashboard() {
                 dob: "",
                 blood_group: "",
             });
-            setSuccess("Voter registered successfully!");
         } catch (err) {
-            setError(err.response?.data?.message || "Error registering voter.");
+            setError("⚠️ Error registering voter.");
         } finally {
             setLoading(false);
         }
@@ -172,15 +171,15 @@ function Dashboard() {
     };
 
     const connectMetaMask = async () => {
-        if (typeof window.ethereum !== "undefined") {
+        if (window.ethereum) {
             try {
                 const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
                 setUserAccount(accounts[0]);
-            } catch (error) {
-                setError("Failed to connect MetaMask.");
+            } catch {
+                setError("❌ Failed to connect MetaMask.");
             }
         } else {
-            alert("Please install MetaMask.");
+            alert("⚠️ Please install MetaMask.");
         }
     };
 
@@ -188,11 +187,11 @@ function Dashboard() {
         <div className="dashboard">
             <div className="voting-section">
                 <h2>Election Voting</h2>
-                {loading && <p>Loading...</p>}
+                {loading && <p>⏳ Loading...</p>}
                 {voterExists ? (
                     <div>
                         <button onClick={connectMetaMask}>Connect MetaMask</button>
-                        {userAccount && <p>Connected Account: {userAccount}</p>}
+                        {userAccount && <p>Connected: {userAccount}</p>}
                         <ul>
                             {candidates.length > 0 ? (
                                 candidates.map((candidate) => (
@@ -203,53 +202,12 @@ function Dashboard() {
                                     </li>
                                 ))
                             ) : (
-                                <p>No candidates available.</p>
+                                <p>⚠️ No candidates available.</p>
                             )}
                         </ul>
                     </div>
                 ) : (
-                    <form onSubmit={handleAddVoter}>
-                        <input
-                            type="text"
-                            name="full_name"
-                            placeholder="Full Name"
-                            onChange={handleInputChange}
-                            value={formData.full_name}
-                            required
-                        />
-                        <input
-                            type="text"
-                            name="last_name"
-                            placeholder="Last Name"
-                            onChange={handleInputChange}
-                            value={formData.last_name}
-                            required
-                        />
-                        <input
-                            type="text"
-                            name="permanent_address"
-                            placeholder="Permanent Address"
-                            onChange={handleInputChange}
-                            value={formData.permanent_address}
-                            required
-                        />
-                        <input
-                            type="number"
-                            name="age"
-                            placeholder="Age"
-                            onChange={handleInputChange}
-                            value={formData.age}
-                            required
-                        />
-                        <input
-                            type="date"
-                            name="dob"
-                            onChange={handleInputChange}
-                            value={formData.dob}
-                            required
-                        />
-                        <button type="submit">Register Voter</button>
-                    </form>
+                    <p>⚠️ You must register as a voter first.</p>
                 )}
                 {error && <p className="error">{error}</p>}
                 {success && <p className="success">{success}</p>}
